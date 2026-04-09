@@ -2,7 +2,7 @@
 
 A clean, from-scratch implementation of a Mistral-style decoder-only transformer trained on Wikipedia, featuring every architectural technique used in modern production LLMs — implemented in ~600 lines of readable PyTorch.
 
-**Trained on a single T4 GPU (Google Colab).**
+
 
 ---
 
@@ -63,23 +63,6 @@ Token IDs
 | Weight sharing | Embedding tied to LM head | Separate matrices |
 
 ---
-
-## Repository Structure
-
-```
-transformer-from-scratch/
-├── notebooks/
-│   └── transformer_wikipedia.ipynb   # full interactive walkthrough
-├── src/
-│   ├── __init__.py
-│   ├── model.py    # RMSNorm, RoPE, KVCache, Attention, SwiGLU, Transformer
-│   ├── optim.py    # Muon optimizer, Newton-Schulz, cosine schedule
-│   └── data.py     # WikiDataset, DataLoader factory
-├── train.py        # training entry point
-├── generate.py     # inference with KV cache
-├── requirements.txt
-└── README.md
-```
 
 ---
 
@@ -485,6 +468,3 @@ Lower $T$ → sharper distribution (more conservative). Higher $T$ → flatter (
 
 ---
 
-## License
-
-MIT
