@@ -64,8 +64,6 @@ Token IDs
 
 ---
 
----
-
 ## Quick Start
 
 ```bash
@@ -90,11 +88,15 @@ For the full interactive notebook, open `notebooks/transformer_wikipedia.ipynb` 
 
 Standard LayerNorm subtracts the mean and divides by standard deviation:
 
-$$\text{LayerNorm}(x) = \frac{x - \mu}{\sqrt{\sigma^2 + \epsilon}} \cdot \gamma + \beta$$
+```math
+\text{LayerNorm}(x) = \frac{x - \mu}{\sqrt{\sigma^2 + \epsilon}} \cdot \gamma + \beta
+```
 
 RMSNorm removes the mean-centering entirely and uses only the root mean square:
 
-$$\text{RMSNorm}(x) = \frac{x}{\sqrt{\frac{1}{d}\sum_{i=1}^{d} x_i^2 + \epsilon}} \cdot \gamma$$
+```math
+\text{RMSNorm}(x) = \frac{x}{\sqrt{\frac{1}{d}\sum_{i=1}^{d} x_i^2 + \epsilon}} \cdot \gamma
+```
 
 **Why it works:** The re-scaling invariance property of LayerNorm comes almost entirely from the division by the RMS, not from the mean subtraction. Removing it saves ~7% of the normalisation compute while matching empirical performance (Zhang & Sennrich, 2019). Mistral, LLaMA, and Gemma all use RMSNorm.
 
@@ -106,21 +108,29 @@ $$\text{RMSNorm}(x) = \frac{x}{\sqrt{\frac{1}{d}\sum_{i=1}^{d} x_i^2 + \epsilon}
 
 **RoPE encodes position via rotation.** For a query vector $q$ at position $m$ and a key vector $k$ at position $n$, we apply:
 
-$$q_m = R_\Theta^m \, q, \quad k_n = R_\Theta^n \, k$$
+```math
+q_m = R_\Theta^m \, q, \quad k_n = R_\Theta^n \, k
+```
 
 where $R_\Theta^m$ is a block-diagonal rotation matrix. The attention score becomes:
 
-$$q_m^\top k_n = q^\top R_\Theta^{n-m} k$$
+```math
+q_m^\top k_n = q^\top R_\Theta^{n-m} k
+```
 
 The score depends only on the **relative position** $n - m$, which is exactly what we want.
 
 **Implementation using complex numbers:** Each consecutive pair of dimensions $(x_{2i}, x_{2i+1})$ is treated as a complex number $z = x_{2i} + i \, x_{2i+1}$. Rotation by angle $\theta$ is multiplication by $e^{i\theta}$:
 
-$$z' = z \cdot e^{i \, m \, \theta_i}$$
+```math
+z' = z \cdot e^{i \, m \, \theta_i}
+```
 
 where
 
-$$\theta_i = \frac{1}{\Theta^{2i/d}}, \quad \Theta = 10000$$
+```math
+\theta_i = \frac{1}{\Theta^{2i/d}}, \quad \Theta = 10000
+```
 
 This is the standard frequency spectrum from the original "Attention is All You Need" positional encoding, now used to rotate rather than add.
 
@@ -132,17 +142,23 @@ This is the standard frequency spectrum from the original "Attention is All You 
 
 Standard Multi-Head Attention (MHA) maintains separate $W_K$ and $W_V$ matrices for every head:
 
-$$\text{MHA}: \; n_\text{heads} \text{ Q heads}, \; n_\text{heads} \text{ KV heads}$$
+```math
+\text{MHA}: \; n_\text{heads} \text{ Q heads}, \; n_\text{heads} \text{ KV heads}
+```
 
 **Problem:** The KV cache grows as $O(n_\text{heads} \cdot T \cdot d_\text{head})$ per layer. At long sequence lengths, this dominates GPU memory.
 
 **GQA solution:** Use fewer KV heads, each shared by a *group* of Q heads:
 
-$$\text{GQA}: \; n_\text{heads} \text{ Q heads}, \; n_\text{kv\_heads} \text{ KV heads}, \quad n_\text{kv\_heads} < n_\text{heads}$$
+```math
+\text{GQA}: \; n_\text{heads} \text{ Q heads}, \; n_\text{kv\_heads} \text{ KV heads}, \quad n_\text{kv\_heads} < n_\text{heads}
+```
 
 Before computing attention, K and V are broadcast to match Q:
 
-$$k_\text{expanded} = \text{repeat}(k, \; g) \quad \text{where} \; g = n_\text{heads} / n_\text{kv\_heads}$$
+```math
+k_\text{expanded} = \text{repeat}(k, \; g) \quad \text{where} \; g = n_\text{heads} / n_\text{kv\_heads}
+```
 
 **Memory saving:** The KV cache shrinks by a factor of $g$. In this implementation, $n_\text{heads} = 8$ and $n_\text{kv\_heads} = 2$, giving a $4\times$ KV cache reduction with negligible quality loss.
 
@@ -156,7 +172,9 @@ Standard causal attention is $O(T^2)$ — each token attends to all previous tok
 
 **Sliding window:** Each query at position $t$ attends only to positions in $[t - W, t]$:
 
-$$\text{Attention}_\text{SWA}(t) = \text{softmax}\!\left(\frac{q_t \cdot K_{[t-W:t]}^\top}{\sqrt{d}}\right) V_{[t-W:t]}$$
+```math
+\text{Attention}_\text{SWA}(t) = \text{softmax}\!\left(\frac{q_t \cdot K_{[t-W:t]}^\top}{\sqrt{d}}\right) V_{[t-W:t]}
+```
 
 **Complexity:** $O(T \cdot W)$ instead of $O(T^2)$.
 
@@ -180,7 +198,9 @@ This is applied to `F.scaled_dot_product_attention`, which uses Flash Attention 
 
 The full attention computation for a single head:
 
-$$\text{Attention}(Q, K, V) = \text{softmax}\!\left(\frac{QK^\top}{\sqrt{d_\text{head}}} + M\right) V$$
+```math
+\text{Attention}(Q, K, V) = \text{softmax}\!\left(\frac{QK^\top}{\sqrt{d_\text{head}}} + M\right) V
+```
 
 where $M$ is the combined causal + sliding window mask ($-\infty$ for masked positions, $0$ elsewhere).
 
@@ -194,11 +214,15 @@ In code, `F.scaled_dot_product_attention` fuses the matmuls and softmax, impleme
 
 Standard FFN:
 
-$$\text{FFN}(x) = \sigma(xW_1) W_2$$
+```math
+\text{FFN}(x) = \sigma(xW_1) W_2
+```
 
 SwiGLU replaces this with a **gated** variant:
 
-$$\text{SwiGLU}(x) = \big(\text{SiLU}(xW_1) \odot xW_3\big) W_2$$
+```math
+\text{SwiGLU}(x) = \big(\text{SiLU}(xW_1) \odot xW_3\big) W_2
+```
 
 where $\text{SiLU}(z) = z \cdot \sigma(z)$ (Sigmoid Linear Unit, also called Swish).
 
@@ -206,7 +230,9 @@ where $\text{SiLU}(z) = z \cdot \sigma(z)$ (Sigmoid Linear Unit, also called Swi
 
 **Hidden dimension:** To keep total parameter count comparable to a standard $4 \times d$ FFN, SwiGLU uses:
 
-$$d_\text{hidden} = \left\lceil \frac{8}{3} \cdot d / m \right\rceil \cdot m$$
+```math
+d_\text{hidden} = \left\lceil \frac{8}{3} \cdot d / m \right\rceil \cdot m
+```
 
 where $m$ is a hardware-alignment multiple (here 32). This is because SwiGLU uses 3 weight matrices instead of 2.
 
@@ -236,7 +262,9 @@ Each step computes K/V only for the **single new token**, not all $t$ tokens. Th
 
 From the PaLM paper (Chowdhery et al., 2022). Adds a small penalty on the log-partition function:
 
-$$\mathcal{L}_\text{total} = \mathcal{L}_\text{CE} + \alpha \cdot \mathbb{E}\left[\left(\log \sum_j e^{z_j}\right)^2\right]$$
+```math
+\mathcal{L}_\text{total} = \mathcal{L}_\text{CE} + \alpha \cdot \mathbb{E}\left[\left(\log \sum_j e^{z_j}\right)^2\right]
+```
 
 where $\alpha = 10^{-4}$ and $z$ are the pre-softmax logits.
 
@@ -248,7 +276,9 @@ where $\alpha = 10^{-4}$ and $z$ are the pre-softmax logits.
 
 The input embedding matrix $W_e \in \mathbb{R}^{V \times d}$ is shared with the output LM head $W_\text{head} \in \mathbb{R}^{d \times V}$:
 
-$$\text{logits} = h \cdot W_e^\top$$
+```math
+\text{logits} = h \cdot W_e^\top
+```
 
 **Benefits:**
 - Saves $V \times d$ parameters (~50k × 512 = 25.6M parameters, ~60% of the model in this config).
@@ -261,14 +291,20 @@ $$\text{logits} = h \cdot W_e^\top$$
 
 Each block uses pre-norm residual connections:
 
-$$h \leftarrow h + \text{Attention}(\text{RMSNorm}(h))$$
-$$h \leftarrow h + \text{FFN}(\text{RMSNorm}(h))$$
+```math
+h \leftarrow h + \text{Attention}(\text{RMSNorm}(h))
+```
+```math
+h \leftarrow h + \text{FFN}(\text{RMSNorm}(h))
+```
 
 **Pre-norm** (normalise before the sublayer) is more stable than post-norm (normalise after) for deep models, because gradients flow unimpeded through the residual stream.
 
 **Output projection scaling:** The output projections (`wo` and `w2`) are initialised with smaller variance:
 
-$$\sigma = \frac{0.02}{\sqrt{2 \cdot n_\text{layers}}}$$
+```math
+\sigma = \frac{0.02}{\sqrt{2 \cdot n_\text{layers}}}
+```
 
 This prevents the residual stream from growing too large at initialisation. The factor of $2 \cdot n_\text{layers}$ reflects the two residual additions per block (attention and FFN).
 
@@ -290,37 +326,51 @@ For each 2D weight matrix $W$ at step $t$:
 
 **Step 1 — Nesterov momentum:**
 
-$$b_t = \mu \, b_{t-1} + g_t$$
-$$\tilde{g}_t = g_t + \mu \, b_t$$
+```math
+b_t = \mu \, b_{t-1} + g_t
+```
+```math
+\tilde{g}_t = g_t + \mu \, b_t
+```
 
 where $\mu = 0.95$ is the momentum coefficient and $g_t = \nabla_W \mathcal{L}$.
 
 **Step 2 — Orthogonalize:**
 
-$$G_\perp = \text{NewtonSchulz}(\tilde{g}_t)$$
+```math
+G_\perp = \text{NewtonSchulz}(\tilde{g}_t)
+```
 
 This approximates the polar factor $U$ in the polar decomposition $\tilde{g}_t = U S V^\top$ (i.e., the "nearest orthogonal matrix").
 
 **Step 3 — Scale:**
 
-$$\Delta W = G_\perp \cdot \sqrt{\max(m, n)}$$
+```math
+\Delta W = G_\perp \cdot \sqrt{\max(m, n)}
+```
 
 This rescaling ensures the update has consistent RMS regardless of matrix dimensions.
 
 **Step 4 — Update:**
 
-$$W \leftarrow W - \eta \, \Delta W$$
+```math
+W \leftarrow W - \eta \, \Delta W
+```
 
 ---
 
 ### Newton-Schulz Orthogonalization
 
-Finding the polar factor of $G$ exactly requires SVD, which is $O(mn \min(m,n))$. Instead, we use a matrix polynomial iteration that converges in $\sim 5$ steps.
+Finding the polar factor of $G$ exactly requires SVD, which is $O(mn \min(m,n))$. Instead, we use a matrix polynomial iteration that converges in ~5 steps.
 
 **Iteration:**
 
-$$X_0 = G / \|G\|_F$$
-$$X_{t+1} = a X_t + b (X_t X_t^\top) X_t + c (X_t X_t^\top)^2 X_t$$
+```math
+X_0 = G / \|G\|_F
+```
+```math
+X_{t+1} = a X_t + b (X_t X_t^\top) X_t + c (X_t X_t^\top)^2 X_t
+```
 
 with coefficients $(a, b, c) = (3.4445, -4.7750, 2.0315)$.
 
@@ -347,10 +397,12 @@ Empirically, Muon:
 
 ### Cosine LR Schedule
 
-$$\eta(t) = \begin{cases}
+```math
+\eta(t) = \begin{cases}
 \eta_\text{max} \cdot \dfrac{t}{T_\text{warmup}} & t < T_\text{warmup} \\[6pt]
 \eta_\text{max} \cdot \max\!\left(r, \; \dfrac{1 + \cos\!\left(\pi \cdot \dfrac{t - T_\text{warmup}}{T_\text{total} - T_\text{warmup}}\right)}{2}\right) & t \geq T_\text{warmup}
-\end{cases}$$
+\end{cases}
+```
 
 where $r = 0.1$ is the minimum LR ratio.
 
@@ -417,7 +469,9 @@ Uses the GPT-2 BPE tokenizer (50,257 tokens). The vocabulary includes common Eng
 
 At each decode step, the vocabulary is sorted by probability. We keep the smallest set $V^* \subseteq V$ such that:
 
-$$\sum_{v \in V^*} p(v) \geq p_\text{top}$$
+```math
+\sum_{v \in V^*} p(v) \geq p_\text{top}
+```
 
 We then sample from the renormalized distribution over $V^*$ only.
 
@@ -427,7 +481,9 @@ This concentrates probability mass on plausible continuations while preserving d
 
 Temperature $T$ scales the logits before softmax:
 
-$$p(v) \propto \exp(z_v / T)$$
+```math
+p(v) \propto \exp(z_v / T)
+```
 
 Lower $T$ → sharper distribution (more conservative). Higher $T$ → flatter (more creative).
 
@@ -467,4 +523,3 @@ Lower $T$ → sharper distribution (more conservative). Higher $T$ → flatter (
 10. **Modular Duality in Deep Learning** — Jordan (2024). Geometric motivation for Muon.
 
 ---
-
